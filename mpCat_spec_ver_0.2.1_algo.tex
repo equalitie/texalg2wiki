@@ -1,0 +1,194 @@
+\begin{algorithm}[H]
+\caption{Chatroom setup}
+\label{alg_chat_setup}
+\begin{algorithmic}[1]
+\Procedure{Chat Initiator Init}{$newRoomName$, $participantNick$}
+  \State Global $myId := 1$
+  \State Global $Nick_{myId} := participantNick$
+  \State Global $roomName := newRoomName$
+  \State Global $x_{myId}, y_{myId} :=$ \Call{Generate Initial Paramters}{$myId$}
+  \State Global $signatureKey_{myId} := (x_{myId},y_{myId})$
+  \State $participantList := [Nick_{myId}]$
+  \State $ephemeralPublicPointList := [y_{myId}, y_{other}]$
+\EndProcedure
+
+\Procedure{Verify Verifier Generate Init Key}{$schnorrRandomPoint_{other}$, $Hv_{other}$, $v_{other}$, $y_{other}$, $Nick_{other}$}
+  \State \Call{Verify Verifiers}{}
+  \State Global $sessionKey := SHA-512(x_{myId}y_{other}, sessionId)$
+  \State $toBeSigned := SHA-512(SHA-512(sessionId||SHA-512(y_1, v_1)||SHA-512(y_2,v_2)))$
+  \State \Call{Sign Session and Send}{$toBeSigned$}
+\EndProcedure
+
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{Join}
+\label{alg_join}
+\begin{algorithmic}[1]
+\Procedure{Join}{$newRoomName$, $Nickname_{myId}$, $participantId$}
+  \State Global $myId := participantId$
+  \State Global $roomName := newRoomName$
+  \State $x_{myId}, y_{myId} := $\Call{Generate Initial Paramters}{Participant ID $myId$}
+  \State Global $signatureKey_{myId} := (x_{myId},y_{myId})$
+  \State \Call{Broadcast}{``:3mpCat:3Join:3'', $myId$, $Nickname_{myId}$, $y_{myId}$}
+  \State Global $participantList, ephemeralPublicPointList :=$ \Call{Receive}{}
+  \State Global $sessionId := $ \Call{Compute Session Id}{$roomName$, $participantList$, $ephemeralPublicPointList$}
+  \State \Call{Sign and Send Key Confirmation and Shares}{}
+  \State \Call{Wait On Receive}{``:3mpCat:3KeyConfirmationShare:3''}
+  \State Global $keyShareList, keyConfirmationList, signatureList :=$ \Call{Receive}{}
+  \State \Call{Verify Key Confirmations and Signatures}{$keyConfirmationList$, $signatureList$}
+  \State \Call{Update Session Key}{}
+\EndProcedure
+
+\Procedure{Receive Session Digest}{$currentSessionHistoryDigest$}
+  \State Global $sessionDigest := currentSessionHistoryDigest$
+\EndProcedure
+
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{Protocol for other participants already in the chat to accept the newcomer}
+\label{alg_accept}
+\begin{algorithmic}[1]
+\Procedure{Accept}{newParticipant}
+  \State \Call{Broadcast}{``:3mpCat:3Join:3'', $myId$, $Nickname_{myId}$, $y_{myId}$}
+  \State \Call{Wait On Receive}{``:3mpCat:3Join:3''}
+  \State Global $nick_{NewParticipant}$, $ephemeralPublicPoint_{NewParticipant} := $ \Call{Receive}{}
+  \State \Call{Update Lists}{$nick_{NewParticipant}$, $ephemeralPublicPoint_{NewParticipant}$}
+  \State Global $sessionId := $ \Call{Compute Session Id}{$roomName$, $participantList$, $ephemeralPublicPointList$}
+  \State \Call{Sign and Send Key Confirmation and Shares}{}
+  \State \Call{Wait On Receive}{``:3mpCat:3KeyConfirmationShare:3''}
+  \State Global $keyShareList, keyConfirmationList, signatureList :=$ \Call{Receive}{}
+  \State \Call{Verify Key Confirmations and Signatures}{$keyConfirmationList$, $signatureList$}
+  \State \Call{Update Session Key}{}
+  \State \Call{Send}{$sessionDigest$}
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{Farewell}
+\label{alg_farewell}
+\begin{algorithmic}[1]
+\Procedure{Shrink on Leave}{$leaverId$}
+  \State Remove $leaverId$ from $participantIdList$
+  \State Global $sessionId :=$ \Call{Compute Session Id}{}
+  \If{$|participantList| > 1$}
+  \State \Call{Sign and Send Key Shares}{}
+  \State \Call{Wait On Receive}{``:3mpCat:3KeyShare:3''}
+  \State $keyShareList$ := Receive{}
+  \State \Call{Update Session Key}{$keyShareList$}
+  \EndIf
+\EndProcedure
+
+\Procedure{Sign and Send Key Shares}{}
+  \State Global $z_{myId -1, myId} := SHA-512(k_{myId,myId-1}, sessionId)$
+  \State Global $z_{myId, myId+1} := SHA-512(k_{myId,myId+1}, sessionId)$
+  \State $keyShare_{myId} := z_{myId -1, myId} \oplus z_{myId, myId+1}$
+  \State $originAuthSignature :=$ \Call{ED25519Sign}{$SignatureKey$, $sessionId$ || $z_{myId}$}
+  \State \Call{Broadcast}{``:3mpCat:3KeyShare:3'', $myId$, $keyShare_{myId}$, $originAuthSignature$} \Comment we can send this encrypted but leaving person can read it, hence theoretically it is the same as sending it unencrypted.
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{Send}
+\label{alg_send}
+\begin{algorithmic}[1]
+\Procedure{Send}{Message}{MetaMessage, message}
+\State $keyShareMessage$ = \Call{NewKeyShareMessage}{MetaMessage}
+\State $cryptMessage$ := \Call{AES CTR Encrypt}{$sessionKey$,$message | keyShareMessage$}
+\State $originAuthSignature$ := \Call{ED25519Sign}{$SignatureKey$, $sessionId$ || $cryptMetatMessage$}
+\State $sessionDigest$ := \Call{Compute Session Digest}{$lastMessage$}
+\State \Call{Broadcast}{``:3mpCat:3'', $sessionId$, $cryptMessage$, $sessionDigest$, $originAuthSignature$,``:3''}
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{Recieve}
+\label{alg_recv}
+\begin{algorithmic}[1]
+\Procedure{Receive}{$sender$, $encryptedMessage$, $originAuthSignature$, $sessionDigest$}
+\State $v := $ \Call{ED25519VerifySignature}{$ephemeralPublicKeyList[Sender]$, $sessionId || encryptedMessage$, $originAuthSignature$}
+\State \Call{Assert}{$v$} or \Return Reject
+\State $message, keyShareMessage :=$ \Call{AES CTR Decrypt}{$sessionKey$, $encryptedMessage$}{}
+\State $isMetaMessage = $\Call{UpdateNewKeyStatus}{$keyShareMessage$}
+\State \Call{Verify Digests}{$sessionDiges$}
+\State \Return{$isMetaMessage, message$}
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Common functions}
+
+\begin{algorithm}[H]
+\caption{Common functions used by other procedures in different stages}
+\label{alg_comm}
+\begin{algorithmic}[1]
+
+\Procedure{Generate Initial Paramters}{$myId$}
+  \State $signaturePrivateKey := $ \Call{RandomBits}{256}
+  \State $x_{myId} :=$ \Call{Ed25519 Scalar}{$signaturePrivateKey$)}\Comment{This is both Diffie-Hellman secret and ephemeral signature private key}
+  \State $y_{myId} := x_{myId}P$
+  \Return $x,y$
+\EndProcedure
+
+\Procedure{Verify Key Confirmation and Signatures}{$signatureList$, $keyConfirmationList$}
+   \ForAll{$participant \in participantList$}
+     \If{$keyConfirmationList[participant][myId] \neq SHA-512(k_{myId,participant}, U_{myId})$}
+      \State \Call{Halt}{}
+      \Else \If{\Call{ED25519VerifySignature}{$ephemeralPublicKeyList[particicpant]$, $sessionId ||keyShares[myId]$, $originAuthSignature$} = Fail} 
+      \State \Call{Halt}{}
+    \EndIf
+    \EndIf
+  \EndFor
+\EndProcedure
+
+\Procedure{Compute Session Id}{$participantList$, $ephemeralPublicPointList$}
+  \State \Return $SHA-512(roomeName, zip(participantList, ephemeralPublicPointList))$ \Comment $zip([a,b],[c,d]):=[(a,c),(b,d)]$
+\EndProcedure
+
+\Procedure{Verify Signatures}{$longPublicList$,$schnorrRandomPointList$, }
+\EndProcedure
+
+\Procedure{Sign and Send Key Confirmation and Share}{$schnorrRandomPointList$}
+ \ForAll{$participant \in participantList$}:
+    \State $k_{myId, participant} := H(g^{lp_{myId}}LP_{participant}y_{participant}^{x_{myId}})$ \Comment Triple DH
+    \State $kc_{myId} := kc_{myId} | H(k_{myId,participant}, U_{participant})$
+  \EndFor
+
+  \State Global $z_{myId -1, myId} := SHA-512(k_{myId,myId-1}, sessionId)$
+  \State Global $z_{myId, myId+1} := SHA-512(k_{myId,myId+1}, sessionId)$
+  \State $keyShare_{myId} := z_{myId -1, myId} \oplus z_{myId, myId+1}$
+
+    \State $originAuthSignature :=$ \Call{ED25519Sign}{$SignatureKey$, $sessionId$ || $z_{myId}$}
+  \State \Call{Broadcast}{``:3mpCat:3KeyConfirmationAndShare:3'', $myId$, $keyShare_{myId}$, $originAuthSignature$, $kc_{myId}$}
+\EndProcedure
+
+\Procedure{Update Session Key}{$keyShareList$}
+\State $i := myId$
+\ForAll{${j \in [i,...,i+n-1]}$}
+\State   $z_{j,j+1} := z_{j-1,j} \oplus keyShareListe[j+1]$
+\EndFor \Comment recovered $z_{i-1,i}$ should be equal to its original value
+\State Global $sessionKey := SHA-512(z_{j,j+1} | j \in [1...n])$
+\EndProcedure
+
+\Procedure{Sign Params Update Session Key}{$toBeSigned$, $signatureList$, $keyShareList$}
+\State \Call{Update Session Key}{}
+\State $toBeSigned := SHA-512(sessionId, ||SHA-512(verifierList, ephemeralPublicPointList, keyShareList)))$
+\State $signature_{myId} := $\Call{Sign Session and Send}{$toBeSigned$}
+\State \Call{Broadcast}{``:3mpCat:3SignedSessionParameters:3'',$signature_{myId}$}
+\EndProcedure
+
+\Procedure{ComputeSessionDigest}{$lastMessage$}
+\ForAll{$message$ in Messages Received from $lastDigestedMessage$+1 till $lastMessage$}
+\State $sesionDigest :=$ \Call{SHA-512}{$sessionDigest$, $message$}, 
+\State \Call{LRU Cache Store Digest}{$sessionDigest$, $message$}
+\EndFor
+\State \Return $sessionDigest$,$lastMessageId$
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
